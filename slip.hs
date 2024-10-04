@@ -175,32 +175,48 @@ showSexp e = showSexp' e ""
 
 type Var = String
 
-data Lexp = Lnum Int             -- Constante entière.
-          | Lbool Bool           -- Constante Booléenne.
-          | Lvar Var             -- Référence à une variable.
-          | Ltest Lexp Lexp Lexp -- Expression conditionelle.
-          | Lfob [Var] Lexp      -- Construction de fobjet.
-          | Lsend Lexp [Lexp]    -- Appel de fobjet.
-          | Llet Var Lexp Lexp   -- Déclaration non-récursive.
-          -- Déclaration d'une liste de variables qui peuvent être
+data Lexp = Lnum Int             -- Constante entière.             -fait
+          | Lbool Bool           -- Constante Booléenne.           -  
+          | Lvar Var             -- Référence à une variable.      -fait
+          | Ltest Lexp Lexp Lexp -- Expression conditionelle.      -fait
+          | Lfob [Var] Lexp      -- Construction de fobjet.        -fait
+          | Lsend Lexp [Lexp]    -- Appel de fobjet.               -
+          | Llet Var Lexp Lexp   -- Déclaration non-récursive.     -fait
+          -- Déclaration d'une liste de variables qui peuvent être 
           -- mutuellement récursives.
-          | Lfix [(Var, Lexp)] Lexp
+          | Lfix [(Var, Lexp)] Lexp                               --
           deriving (Show, Eq)
 
-fromSsym :: Sexp -> String 
+fromSsym :: Sexp -> Var 
 fromSsym (Ssym s) = s
 fromSsym _ = error "Expected a symbole"
+
+snodeSep :: [Sexp] -> [(Var, Lexp)]
+snodeSep (x:xs) = case x of 
+    Snode e1 liste -> (snodeSep [e1]) ++ (snodeSep liste) ++ (snodeSep xs)
+    Ssym e          -> [(e, s2l (head xs))]
+    _               -> []
+snodeSep _ = error "Expected a non-empty Snode with a symbol and expressions"
+  --  (snodeSep x) ++ (map snodeSep xs
+--snodeSep [Snode e1 (x:xs)] = case e1 of
+   -- Snode e2 (y:ys) -> snodeSep e2 ++ snodeSep (Snode y ys)
+   -- Ssym e2         -> [(e2, s2l (Snode x xs))]
+
 
 -- Première passe simple qui analyse une Sexp et construit une Lexp équivalente.
 s2l :: Sexp -> Lexp
 s2l (Snum n) = Lnum n
-s2l (Ssym s) = Lvar s
+s2l (Ssym s) = case s of
+    "True"  -> Lbool True
+    "False" -> Lbool False
+    _       -> Lvar s
+
 s2l (Snode e1 (x:xs)) 
-    | fromSsym e1 == "True" || "False" = Lbool e1 
-    | 
-
-
-
+    | fromSsym e1 == "if"  = Ltest (s2l x) (s2l (head xs)) (s2l (last xs)) 
+    | fromSsym e1 == "fob" = Lfob (map fromSsym (init (x:xs))) (s2l (last xs)) 
+    | fromSsym e1 == "let" = Llet (fromSsym x) (s2l (head xs)) (s2l (last xs))
+    | fromSsym e1 == "fix" = Lfix (snodeSep (x:xs)) (s2l (last xs))
+    | otherwise = error "s2l "
 
 -- ¡¡COMPLÉTER ICI!!
 s2l se = error ("Expression Psil inconnue: " ++ showSexp se)
@@ -250,6 +266,7 @@ env0 = let binop f op =
 eval :: VEnv -> Lexp -> Value
 -- ¡¡ COMPLETER !!
 eval _ (Lnum n) = Vnum n
+eval _ _ = error "evalll"
                   
 ---------------------------------------------------------------------------
 -- Toplevel                                                              --
@@ -280,3 +297,21 @@ lexpOf = s2l . sexpOf
 
 valOf :: String -> Value
 valOf = evalSexp . sexpOf
+
+
+test1 = s2l (Snum 42)
+-- Résultat attendu : Lnum 42
+test2 = s2l (Ssym "x")
+-- Résultat attendu : Lvar "x"
+test3 = s2l (Snode (Ssym "if") [Snum 1, Snum 2, Snum 3])
+-- Résultat attendu : Ltest (Lnum 1) (Lnum 2) (Lnum 3)
+test4 = s2l (Snode (Ssym "fob") [Ssym "x", Ssym "y", Snum 42])
+-- Résultat attendu : Lfob ["x", "y"] (Lnum 42)
+
+test5 = s2l (readSexp "(fix ((x 2) (y 3) (z 4)) (+ (* x y) z))")
+--"(fix (((even x)  (if (= x 0) true  (odd  (- x 1))))((odd x)   (if (= x 0) false (even (- x 1)))))(odd 42))"                         
+--; ↝ False
+test6 = readSexp "(fix ((y 10) ((div2 x) (/ x 2))) (div2 y))"
+--Snode (Snode (Snode (Ssym "fob") [Snode (Ssym "x") [],Snode (Ssym "fob") [Snode (Ssym "y") [],Snode (Ssym "*") [Ssym "x",Ssym "y"]]]) [Snum 3]) [Snum 5]
+
+
