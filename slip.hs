@@ -192,15 +192,16 @@ fromSsym (Ssym s) = s
 fromSsym _ = error "Expected a symbole"
 
 snodeSep :: [Sexp] -> [(Var, Lexp)]
-snodeSep (x:xs) = case x of 
+snodeSep [] = []
+snodeSep ((Snode (Ssym x) [body]):xs) = (x, s2l body) : snodeSep xs
+snodeSep _ = error "Invalid fix declaration"
+
+{-snodeSep (x:xs) = case x of 
     Snode e1 liste -> (snodeSep [e1]) ++ (snodeSep liste) ++ (snodeSep xs)
     Ssym e          -> [(e, s2l (head xs))]
     _               -> []
 snodeSep _ = error "Expected a non-empty Snode with a symbol and expressions"
-  --  (snodeSep x) ++ (map snodeSep xs
---snodeSep [Snode e1 (x:xs)] = case e1 of
-   -- Snode e2 (y:ys) -> snodeSep e2 ++ snodeSep (Snode y ys)
-   -- Ssym e2         -> [(e2, s2l (Snode x xs))]
+ -}
 
 
 -- Première passe simple qui analyse une Sexp et construit une Lexp équivalente.
@@ -211,12 +212,37 @@ s2l (Ssym s) = case s of
     "False" -> Lbool False
     _       -> Lvar s
 
+s2l (Snode e1 []) = s2l e1 
+s2l (Snode e1 [x]) = case e1 of
+    Snum n -> Lnum n 
+    Ssym f -> Lsend (Lvar f) [s2l x]  -- 2 cas : appel de fct wla declaration de fct (div2 x)
+    _      -> error "err snode [x]"
+
 s2l (Snode e1 (x:xs)) 
     | fromSsym e1 == "if"  = Ltest (s2l x) (s2l (head xs)) (s2l (last xs)) 
     | fromSsym e1 == "fob" = Lfob (map fromSsym (init (x:xs))) (s2l (last xs)) 
     | fromSsym e1 == "let" = Llet (fromSsym x) (s2l (head xs)) (s2l (last xs))
     | fromSsym e1 == "fix" = Lfix (snodeSep (x:xs)) (s2l (last xs))
-    | otherwise = error "s2l "
+    | otherwise = Lvar (fromSsym e1)               --error "s2l " wla s2l (Snode e1 args) = Lsend (s2l e1) (map s2l args)
+
+
+{-s2l (Snode (Ssym "if") (cond:thenExp:elseExp:_)) =
+    Ltest (s2l cond) (s2l thenExp) (s2l elseExp)
+
+s2l (Snode (Ssym "fob") (args@(_:_) ++ [body])) =
+    Lfob (map fromSsym args) (s2l body)
+
+s2l (Snode (Ssym "let") [Ssym x, exp1, exp2]) =
+    Llet x (s2l exp1) (s2l exp2)
+
+s2l (Snode (Ssym "fix") (declarations ++ [body])) =
+    Lfix (snodeSep declarations) (s2l body)
+
+-- Pour les appels de fonction
+s2l (Snode e1 args) = Lsend (s2l e1) (map s2l args)
+
+s2l se = error ("Expression Sexp inconnue: " ++ showSexp se)
+-}
 
 -- ¡¡COMPLÉTER ICI!!
 s2l se = error ("Expression Psil inconnue: " ++ showSexp se)
@@ -263,11 +289,25 @@ env0 = let binop f op =
 -- Évaluateur                                                            --
 ---------------------------------------------------------------------------
 
+elookup :: Var -> VEnv -> Value 
+elookup x ((x1,v1):env) =
+    if x == x1 
+    then v1 
+    else elookup x env
+elookup _ [] = error "Variable non trouvée"
+
+
 eval :: VEnv -> Lexp -> Value
--- ¡¡ COMPLETER !!
 eval _ (Lnum n) = Vnum n
+eval _ (Lbool b) = Vbool b
+eval env (Lvar x) = elookup x env
+eval env (Ltest e1 e2 e3) = case (eval env e1) of 
+    Vbool b  -> if b then (eval env e2) else (eval env e3)
+
+
+
 eval _ _ = error "evalll"
-                  
+                 
 ---------------------------------------------------------------------------
 -- Toplevel                                                              --
 ---------------------------------------------------------------------------
@@ -308,10 +348,10 @@ test3 = s2l (Snode (Ssym "if") [Snum 1, Snum 2, Snum 3])
 test4 = s2l (Snode (Ssym "fob") [Ssym "x", Ssym "y", Snum 42])
 -- Résultat attendu : Lfob ["x", "y"] (Lnum 42)
 
-test5 = s2l (readSexp "(fix ((x 2) (y 3) (z 4)) (+ (* x y) z))")
+test5 = s2l (readSexp "(fix ((y 10) ((div2 x) (/ x 2))) (div2 y))")
 --"(fix (((even x)  (if (= x 0) true  (odd  (- x 1))))((odd x)   (if (= x 0) false (even (- x 1)))))(odd 42))"                         
 --; ↝ False
-test6 = readSexp "(fix ((y 10) ((div2 x) (/ x 2))) (div2 y))"
+test6 =  (s2l (readSexp "(if True (< 3 1) (6))"))
 --Snode (Snode (Snode (Ssym "fob") [Snode (Ssym "x") [],Snode (Ssym "fob") [Snode (Ssym "y") [],Snode (Ssym "*") [Ssym "x",Ssym "y"]]]) [Snum 3]) [Snum 5]
 
 
