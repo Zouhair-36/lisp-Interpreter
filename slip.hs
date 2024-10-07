@@ -184,7 +184,7 @@ data Lexp = Lnum Int             -- Constante entière.
           | Llet Var Lexp Lexp   -- Déclaration non-récursive.     
           -- Déclaration d'une liste de variables qui peuvent être 
           -- mutuellement récursives.
-          | Lfix [(Var, Lexp)] Lexp                               
+          | Lfix [(Var, Lexp)] Lexp
           deriving (Show, Eq)
 
 fromSsym :: Sexp -> Var
@@ -200,21 +200,21 @@ snodeSep :: [Sexp] -> [(Var, Lexp)]
 snodeSep [] = []
 
 -- Cas des fonctions avec plusieurs arguments
-snodeSep (Snode (Snode (Ssym f) params) body : rest) = case s2l (head params) of 
+snodeSep (Snode (Snode (Ssym f) params) body : rest) = case s2l (head params) of
     Lnum n   -> (f, Lnum n) : snodeSep body ++ snodeSep rest
     Lvar arg -> (f, Lfob (map fromSsym params) (s2l (head body))) : snodeSep rest
     _        -> error "cas plusieurs arg"
-
+          (f, Lfob (map fromSsym params) (s2l (head body))) : snodeSep rest
 -- Cas des variables (sans arguments)
 snodeSep (Snode (Ssym var) [body] : rest) =
     (var, s2l body) : snodeSep rest
 
 -- Cas des fonctions mutuellement recursives 
-snodeSep (Snode sexp (x:xs): rest) = snodeSep [sexp] ++ snodeSep (x:xs) ++ snodeSep rest 
+snodeSep (Snode sexp (x:xs): rest) = snodeSep [sexp] ++ snodeSep (x:xs) ++ snodeSep rest
 
 snodeSep _ = error "Invalid fix declaration"
 
- 
+
 -- Première passe simple qui analyse une Sexp et construit une Lexp équivalente.
 s2l :: Sexp -> Lexp
 s2l (Snum n) = Lnum n
@@ -228,8 +228,7 @@ s2l (Snode e1 []) = s2l e1
 s2l (Snode (Ssym "if") [cond, ethen, eelse]) =
     Ltest (s2l cond) (s2l ethen) (s2l eelse)
 
-s2l (Snode (Ssym "fob") args) =
-    Lfob (map fromSsym (init args)) (s2l (last args))
+s2l (Snode (Ssym "fob") args) = Lfob (map (fromLvar . s2l) (init args)) (s2l (last args))
 
 s2l (Snode (Ssym "let") [Ssym x, e1, e2]) =
     Llet x (s2l e1) (s2l e2)
@@ -291,15 +290,37 @@ elookup x ((x1,v1):env) =
     else elookup x env
 elookup _ [] = error "Variable non trouvée"
 
+fromLvar :: Lexp -> Var
+fromLvar (Lvar var) = var
+fromLvar _ = error "Expected a variable"
+
+lexpToVal :: VEnv -> (Var, Lexp) -> (Var, Value)
+lexpToVal env (var, lexp) = (var, eval env lexp)
+
 
 eval :: VEnv -> Lexp -> Value
 eval _ (Lnum n) = Vnum n
 eval _ (Lbool b) = Vbool b
 eval env (Lvar x) = elookup x env
-eval env (Ltest e1 e2 e3) = case (eval env e1) of
-    Vbool b  -> if b then (eval env e2) else (eval env e3)
+eval env (Ltest e1 e2 e3) = case eval env e1 of
+    Vbool b  -> if b   then eval env e2   else eval env e3
+    _        -> error "first expression is not a boolean"
+
+eval env (Lfob args lexp) = Vfob env args lexp
+
+eval env (Lsend f args) = case eval env f of
+    Vfob closure (x:xs) body ->
+        if length (x:xs) == length args
+        then let newEnv = zip (x:xs) (map (eval env) args) ++ closure
+             in eval newEnv body
+        else error "Nombre d'arguments incorrect pour la fonction"
+    Vbuiltin primitive    -> primitive (map (eval env) args) 
+    _ -> error "Tentative d'appel sur une valeur non fonctionnelle"
 
 
+eval env (Llet x e1 e2) = eval ((x, eval env e1) : env) e2
+
+eval env (Lfix decla body) = eval (map (lexpToVal env) decla ++ env) body 
 
 eval _ _ = error "evalll"
 
@@ -347,14 +368,17 @@ test4 :: Lexp
 test4 = s2l (Snode (Ssym "fob") [Ssym "x", Ssym "y", Snum 42])
 -- Résultat attendu : Lfob ["x", "y"] (Lnum 42)
 
-test5 :: Lexp
-test5 = s2l (readSexp "(fix ((y 10) ((div2 x) (/ x 2))) (div2 y))")
+--test5 :: Lexp
+test5 = s2l (readSexp "((fob (x) x) 2)")
+-- Snode (Snode (Ssym "fob") [Snode (Ssym "x") [],Ssym "x"]) [Snum 2]
 
 test6 :: Lexp
 test6 = s2l (readSexp "(fix ((z 2) ((f x y) (+ x y))) (f z 8))")
 
 test7 :: Lexp
-test7 = s2l (readSexp "(fix ((x 2) (y 3) (z 4)) (+ (* x y) z))")
+test7 = s2l (readSexp "(fix ((y 10) ((div2 x) (/ x 2))) (div2 y))")
 
 test8 :: Lexp
 test8 =  s2l (readSexp "(fix (((even x) (if (= x 0) true (odd (- x 1)))) ((odd x) (if (= x 0) false (even (- x 1))))) (odd 42))")
+
+test9 = eval env0 (Lsend (Lvar "+") [Lnum 3, Lnum 7])
