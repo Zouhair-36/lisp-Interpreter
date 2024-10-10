@@ -204,7 +204,7 @@ snodeSep (Snode (Snode (Ssym f) params) body : rest) = case s2l (head params) of
     Lnum n   -> (f, Lnum n) : snodeSep body ++ snodeSep rest
     Lvar arg -> (f, Lfob (map fromSsym params) (s2l (head body))) : snodeSep rest
     _        -> error "cas plusieurs arg"
-          (f, Lfob (map fromSsym params) (s2l (head body))) : snodeSep rest
+      
 -- Cas des variables (sans arguments)
 snodeSep (Snode (Ssym var) [body] : rest) =
     (var, s2l body) : snodeSep rest
@@ -320,7 +320,13 @@ eval env (Lsend f args) = case eval env f of
 
 eval env (Llet x e1 e2) = eval ((x, eval env e1) : env) e2
 
-eval env (Lfix decla body) = eval (map (lexpToVal env) decla ++ env) body 
+--eval env (Lfix decla body) = eval (map (lexpToVal env) decla ++ env) body 
+eval env (Lfix decla body) =
+    let -- Création de l'environnement récursif
+        recursiveEnv = map (\(var, Lfob args lexp) -> (var, Vfob recursiveEnv args lexp)) decla ++ env
+        -- Ajout de cet environnement récursif à l'environnement actuel
+        finalEnv = recursiveEnv ++ env
+    in eval finalEnv body
 
 eval _ _ = error "evalll"
 
