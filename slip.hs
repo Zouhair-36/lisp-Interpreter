@@ -191,27 +191,25 @@ fromSsym :: Sexp -> Var
 fromSsym (Ssym s) = s
 fromSsym _ = error "Expected a symbole"
 
-existsInEnv :: Var -> VEnv -> Bool
-existsInEnv _ [] = False
-existsInEnv x ((x1,_) : env) = x == x1 || existsInEnv x env
+fromLvar :: Lexp -> Var
+fromLvar (Lvar var) = var
+fromLvar _ = error "Expected a variable"
 
 
 snodeSep :: [Sexp] -> [(Var, Lexp)]
 snodeSep [] = []
-
 -- Cas des fonctions avec plusieurs arguments
 snodeSep (Snode (Snode (Ssym f) params) body : rest) = case s2l (head params) of
     Lnum n   -> (f, Lnum n) : snodeSep body ++ snodeSep rest
     Lvar arg -> (f, Lfob (map fromSsym params) (s2l (head body))) : snodeSep rest
     _        -> error "cas plusieurs arg"
-      
+    
 -- Cas des variables (sans arguments)
 snodeSep (Snode (Ssym var) [body] : rest) =
     (var, s2l body) : snodeSep rest
 
 -- Cas des fonctions mutuellement recursives 
 snodeSep (Snode sexp (x:xs): rest) = snodeSep [sexp] ++ snodeSep (x:xs) ++ snodeSep rest
-
 snodeSep _ = error "Invalid fix declaration"
 
 
@@ -290,13 +288,6 @@ elookup x ((x1,v1):env) =
     else elookup x env
 elookup _ [] = error "Variable non trouvée"
 
-fromLvar :: Lexp -> Var
-fromLvar (Lvar var) = var
-fromLvar _ = error "Expected a variable"
-
-lexpToVal :: VEnv -> (Var, Lexp) -> (Var, Value)
-lexpToVal env (var, lexp) = (var, eval env lexp)
-
 
 eval :: VEnv -> Lexp -> Value
 eval _ (Lnum n) = Vnum n
@@ -317,18 +308,18 @@ eval env (Lsend f args) = case eval env f of
     Vbuiltin primitive    -> primitive (map (eval env) args) 
     _ -> error "Tentative d'appel sur une valeur non fonctionnelle"
 
-
 eval env (Llet x e1 e2) = eval ((x, eval env e1) : env) e2
 
---eval env (Lfix decla body) = eval (map (lexpToVal env) decla ++ env) body 
 eval env (Lfix decla body) =
     let -- Création de l'environnement récursif
-        recursiveEnv = map (\(var, Lfob args lexp) -> (var, Vfob recursiveEnv args lexp)) decla ++ env
-        -- Ajout de cet environnement récursif à l'environnement actuel
+        recursiveEnv = map (\(var, lexp) -> 
+            case lexp of
+                Lfob args bodyLexp -> (var, Vfob recursiveEnv args bodyLexp)
+                _                  -> (var, eval recursiveEnv lexp)
+            ) decla ++ env 
         finalEnv = recursiveEnv ++ env
-    in eval finalEnv body
 
-eval _ _ = error "evalll"
+    in eval finalEnv body
 
 ---------------------------------------------------------------------------
 -- Toplevel                                                              --
@@ -360,31 +351,7 @@ lexpOf = s2l . sexpOf
 valOf :: String -> Value
 valOf = evalSexp . sexpOf
 
+test :: Lexp
+test =  s2l (readSexp "(fix (((even x) (if (= x 0) true (odd (- x 1)))) ((odd x) (if (= x 0) false (even (- x 1))))) (odd 42))")
 
-test1 :: Lexp
-test1 = s2l (Snum 42)
--- Résultat attendu : Lnum 42
-test2 :: Lexp
-test2 = s2l (Ssym "x")
--- Résultat attendu : Lvar "x"
-test3 :: Lexp
-test3 = s2l (Snode (Ssym "if") [Snum 1, Snum 2, Snum 3])
--- Résultat attendu : Ltest (Lnum 1) (Lnum 2) (Lnum 3)
-test4 :: Lexp
-test4 = s2l (Snode (Ssym "fob") [Ssym "x", Ssym "y", Snum 42])
--- Résultat attendu : Lfob ["x", "y"] (Lnum 42)
 
---test5 :: Lexp
-test5 = s2l (readSexp "((fob (x) x) 2)")
--- Snode (Snode (Ssym "fob") [Snode (Ssym "x") [],Ssym "x"]) [Snum 2]
-
-test6 :: Lexp
-test6 = s2l (readSexp "(fix ((z 2) ((f x y) (+ x y))) (f z 8))")
-
-test7 :: Lexp
-test7 = s2l (readSexp "(fix ((y 10) ((div2 x) (/ x 2))) (div2 y))")
-
-test8 :: Lexp
-test8 =  s2l (readSexp "(fix (((even x) (if (= x 0) true (odd (- x 1)))) ((odd x) (if (= x 0) false (even (- x 1))))) (odd 42))")
-
-test9 = eval env0 (Lsend (Lvar "+") [Lnum 3, Lnum 7])
