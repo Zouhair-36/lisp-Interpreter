@@ -1,3 +1,6 @@
+--Auteur: Zouhair El Yani
+--Date: 15 octobre 2024
+
 -- TP-1  --- Implantation d'une sorte de Lisp          -*- coding: utf-8 -*-
 {-# OPTIONS_GHC -Wall #-}
 --
@@ -73,7 +76,8 @@ integer = do c <- digit
 -- Les symboles sont constitués de caractères alphanumériques et de signes
 -- de ponctuations.
 pSymchar :: Parser Char
-pSymchar    = alphaNum <|> satisfy (\c -> c `elem` "!@$%^&*_+-=:|/?<>")
+pSymchar    = alphaNum <|> satisfy (\c -> not (isAscii c)
+                                          || c `elem` "!@$%^&*_+-=:|/?<>")
 pSymbol :: Parser Sexp
 pSymbol= do { s <- many1 (pSymchar);
               return (case parse integer "" s of
@@ -187,29 +191,32 @@ data Lexp = Lnum Int             -- Constante entière.
           | Lfix [(Var, Lexp)] Lexp
           deriving (Show, Eq)
 
+
 fromSsym :: Sexp -> Var
 fromSsym (Ssym s) = s
 fromSsym _ = error "Expected a symbole"
 
-fromLvar :: Lexp -> Var
-fromLvar (Lvar var) = var
-fromLvar _ = error "Expected a variable"
 
-
+--Cette fonction prend en paramètre une liste de déclarations et retourne
+--une liste de paires associant les variables à leurs valeurs.
 snodeSep :: [Sexp] -> [(Var, Lexp)]
 snodeSep [] = []
--- Cas des fonctions avec plusieurs arguments
-snodeSep (Snode (Snode (Ssym f) params) body : rest) = case s2l (head params) of
-    Lnum n   -> (f, Lnum n) : snodeSep body ++ snodeSep rest
-    Lvar arg -> (f, Lfob (map fromSsym params) (s2l (head body))) : snodeSep rest
-    _        -> error "cas plusieurs arg"
+-- Cas des fonctions
+snodeSep (Snode (Snode (Ssym f) params) body : rest) = 
+    case s2l (head params) of
+        Lnum n   -> (f, Lnum n) : snodeSep body ++ snodeSep rest
+        Lvar _   -> 
+            (f, Lfob (map fromSsym params) (s2l (head body))) : snodeSep rest
+        _        -> error "cas des fonctions"
     
--- Cas des variables (sans arguments)
+-- Cas des variables 
 snodeSep (Snode (Ssym var) [body] : rest) =
     (var, s2l body) : snodeSep rest
 
 -- Cas des fonctions mutuellement recursives 
-snodeSep (Snode sexp (x:xs): rest) = snodeSep [sexp] ++ snodeSep (x:xs) ++ snodeSep rest
+snodeSep (Snode sexp (x:xs): rest) = 
+    snodeSep [sexp] ++ snodeSep (x:xs) ++ snodeSep rest
+
 snodeSep _ = error "Invalid fix declaration"
 
 
@@ -220,18 +227,23 @@ s2l (Ssym s) = case s of
     "true"  -> Lbool True
     "false" -> Lbool False
     _       -> Lvar s
-
 s2l (Snode e1 []) = s2l e1
 
+-- Détection des formes spéciales
 s2l (Snode (Ssym "if") [cond, ethen, eelse]) =
     Ltest (s2l cond) (s2l ethen) (s2l eelse)
 
-s2l (Snode (Ssym "fob") args) = Lfob (map (fromLvar . s2l) (init args)) (s2l (last args))
+s2l (Snode (Ssym "fob") args) = 
+    Lfob (map (extractVar . s2l) (init args)) (s2l (last args))
+    where
+        extractVar (Lvar var) = var
+        extractVar _ = error "Expected a variable"
 
 s2l (Snode (Ssym "let") [Ssym x, e1, e2]) =
     Llet x (s2l e1) (s2l e2)
 
 s2l (Snode (Ssym "fix") decls) =
+    --On transforme les déclarations en paires de variables et leurs valeurs
     Lfix (snodeSep (init decls)) (s2l (last decls))
 
 -- Pour les appels de fonction
@@ -281,6 +293,8 @@ env0 = let binop f op =
 -- Évaluateur                                                            --
 ---------------------------------------------------------------------------
 
+--Cette fonction prend en paramètre une variable et un environnement, 
+--et retourne la valeur de cette variable si elle est définie dans l'env.
 elookup :: Var -> VEnv -> Value
 elookup x ((x1,v1):env) =
     if x == x1
@@ -302,11 +316,13 @@ eval env (Lfob args lexp) = Vfob env args lexp
 eval env (Lsend f args) = case eval env f of
     Vfob closure (x:xs) body ->
         if length (x:xs) == length args
+    --On rajoute les arguments de f à l'environnement avant d'évaluer le corps
         then let newEnv = zip (x:xs) (map (eval env) args) ++ closure
              in eval newEnv body
         else error "Nombre d'arguments incorrect pour la fonction"
-    Vbuiltin primitive    -> primitive (map (eval env) args) 
-    _ -> error "Tentative d'appel sur une valeur non fonctionnelle"
+
+    Vbuiltin primitive -> primitive (map (eval env) args) 
+    _     -> error "Tentative d'appel sur une valeur non fonctionnelle"
 
 eval env (Llet x e1 e2) = eval ((x, eval env e1) : env) e2
 
@@ -317,7 +333,7 @@ eval env (Lfix decla body) =
                 Lfob args bodyLexp -> (var, Vfob recursiveEnv args bodyLexp)
                 _                  -> (var, eval recursiveEnv lexp)
             ) decla ++ env 
-        finalEnv = recursiveEnv ++ env
+        finalEnv = recursiveEnv 
 
     in eval finalEnv body
 
@@ -351,7 +367,6 @@ lexpOf = s2l . sexpOf
 valOf :: String -> Value
 valOf = evalSexp . sexpOf
 
-test :: Lexp
-test =  s2l (readSexp "(fix (((even x) (if (= x 0) true (odd (- x 1)))) ((odd x) (if (= x 0) false (even (- x 1))))) (odd 42))")
+
 
 
